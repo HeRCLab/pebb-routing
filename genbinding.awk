@@ -58,7 +58,7 @@ BEGIN {
 $1 in macros {
 	bits = $3 - $4 + 1
 	if (bits > 64) {
-		printf("\n// Don't know how to handle %d bit wide signal '%s'\n\n", bits, $1)
+		printf("\n// Don't know how to handle %d bit wide signal '%s'\n\n", bits, $2)
 		next
 	}
 

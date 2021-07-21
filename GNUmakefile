@@ -41,7 +41,6 @@ C_INCLUDES=-I$(GENERATED_DIR) -I$(VERILATOR_INC) -I$(VERILATOR_OBJ_DIR) -I$(SIM_
 CFLAGS=-Wall -Wextra $(C_INCLUDES)
 CXXFLAGS=--std=c++17 $(CFLAGS)
 
-
 $(BIN_DIR)/sim: $(GO_FILES) $(H_FILES) $(ARCHIVES) $(GENERATED_DIR)/shim_binding.cpp
 > CGO_CFLAGS="-I temp_include $(C_INCLUDES)" CGO_LDFLAGS="-L$(LIB_DIR) -lshim -lshim_binding -lsimulation -lverilated -lverilated_vcd_c -lstdc++ -lm" go build -o "$@" "$<"
 
@@ -65,7 +64,7 @@ $(SIM_ARCHIVE): $(VERILATOR_OBJ_DIR)/Vsimtop.cpp .builddirs.done
 > $(MAKE) -C $(VERILATOR_OBJ_DIR) -f Vsimtop.mk
 
 $(VERILATOR_OBJ_DIR)/Vsimtop.cpp: $(SV_FILES) .builddirs.done
-> $(VERILATOR) --Mdir "$(VERILATOR_OBJ_DIR)" --trace -cc $(RTL_DIR)/simtop.sv
+> $(VERILATOR) --Mdir "$(VERILATOR_OBJ_DIR)" -I$(RTL_DIR) --trace -cc $(RTL_DIR)/simtop.sv
 
 $(OBJ_DIR)/%.o: $(SIM_DIR)/%.cpp $(SIM_ARCHIVE) $(H_FILES) $(GENERATED_DIR)/shim_binding.cpp
 > $(CXX) $(CXXFLAGS) -c $< -o $@
