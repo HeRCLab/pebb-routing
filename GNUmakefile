@@ -12,11 +12,13 @@ TB_DIR=$(PROJECT_DIR)/tb
 
 # Used for SIM= for cocotb
 TEST_SIMULATOR=icarus
+TB_DIRS=$(shell find $(TB_DIR) -type f -name "Makefile" -exec dirname {} \;)
+TB_DONEFILES=$(shell find $(TB_DIR) -type f -name "Makefile" -exec dirname {} \; | awk '{printf("%s.done", $$0)}')
 
 SV_FILES=$(shell find $(RTL_DIR) -type f -iname "*.sv")
 H_FILES=$(shell find $(SIM_DIR) -type f -iname "*.h")
 GO_FILES=$(shell find $(SIM_DIR) -type f -iname "*.go")
-TB_FILES=$(shell find $(TB_DIR) -type f -name "Makefile")
+
 
 BUILD_DIR=$(PROJECT_DIR)/build
 OBJ_DIR=$(BUILD_DIR)/obj
@@ -46,9 +48,12 @@ C_INCLUDES=-I$(GENERATED_DIR) -I$(VERILATOR_INC) -I$(VERILATOR_OBJ_DIR) -I$(SIM_
 CFLAGS=-Wall -Wextra $(C_INCLUDES)
 CXXFLAGS=--std=c++17 $(CFLAGS)
 
-test:
-> for t in $(TB_FILES) ; do sh -c 'cd "$$(dirname "'"$$t"'")"; make SIM='"$(TEST_SIMULATOR)"';' ; done
+test: $(TB_DONEFILES)
 .PHONY: test
+
+$(TB_DIR)/%.done: $(TB_DIR)/%/Makefile $(SV_FILES)
+> sh -c 'cd "'"$$(echo "$@" | sed s/.done//g)"'/"; make SIM='"$(TEST_SIMULATOR)"';'
+> touch $@
 
 $(BIN_DIR)/sim: $(GO_FILES) $(H_FILES) $(ARCHIVES) $(GENERATED_DIR)/shim_binding.cpp
 > CGO_CFLAGS="-I temp_include $(C_INCLUDES)" CGO_LDFLAGS="-L$(LIB_DIR) -lshim -lshim_binding -lsimulation -lverilated -lverilated_vcd_c -lstdc++ -lm" go build -o "$@" "$<"
@@ -86,9 +91,11 @@ $(GENERATED_DIR)/shim_binding.cpp: $(SIM_ARCHIVE) genbinding.awk .builddirs.done
 
 
 clean:
+> for t in $(TB_DIRS) ; do echo sh -c 'cd "'"$$t"'"; make clean;' ; done
+> for t in $(TB_DIRS) ; do sh -c 'cd "'"$$t"'"; rm -f *.xml *.vcd' ; done
+> for t in $(TB_DIRS) ; do sh -c 'cd "'"$$t"'"; rm -rf __pycache__' ; done
+> for t in $(TB_DIRS) ; do sh -c 'cd "'"$$t"'"; rm -rf sim_build' ; done
+> rm -f $(TB_DONEFILES)
 > rm -rf $(BUILD_DIR)
 > rm -f .builddirs.done
-> for t in $(TB_FILES) ; do sh -c 'cd "$$(dirname "'"$$t"'")"; make clean;' ; done
-> for t in $(TB_FILES) ; do sh -c 'cd "$$(dirname "'"$$t"'")"; rm -f *.xml *.vcd' ; done
-> for t in $(TB_FILES) ; do sh -c 'cd "$$(dirname "'"$$t"'")"; rm -rf __pycache__' ; done
 .PHONY: clean

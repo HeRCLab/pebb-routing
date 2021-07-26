@@ -4,3 +4,4 @@ build/*
 tb/*/__pycache__
 tb/*/*.xml
 tb/*/sim_build
+tb/*.done
