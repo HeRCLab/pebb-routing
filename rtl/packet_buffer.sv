@@ -62,12 +62,8 @@
 
 typedef enum {
 	STATE_IDLE,
-	STATE_READING_HEADER_AND_CONTROL_READY,
-	STATE_READING_HEADER_AND_DUMPING,
-	STATE_READING_HEADER_AND_STREAMING,
-	STATE_READING_BODY_AND_CONTROL_READY,
-	STATE_READING_BODY_AND_DUMPING,
-	STATE_READING_BODY_AND_STREAMING,
+	STATE_READING_HEADER,
+	STATE_READING_BODY,
 	STATE_CONTROL_READY,
 	STATE_DUMPING,
 	STATE_STREAMING
@@ -118,24 +114,39 @@ module packet_buffer #
 
 	/* When asserted, the packet header outputs are valid and a packet
 	 * is in the buffer and ready to be routed. */
-	output packet_ready,
+	output logic packet_ready,
 
 	/* Header information, only valid when packet_ready is high. */
-	output [TO_ADDR_MSB-TO_ADDR_LSB:0]             to_addr,
-	output [FROM_ADDR_MSB-FROM_ADDR_LSB:0]         from_addr,
-	output [PACKET_LENGTH_MSB-PACKET_LENGTH_LSB:0] packet_length,
+	output logic [TO_ADDRESS_MSB-TO_ADDRESS_LSB:0]             to_addr,
+	output logic [FROM_ADDRESS_MSB-FROM_ADDRESS_LSB:0]         from_addr,
+	output logic [PACKET_LENGTH_MSB-PACKET_LENGTH_LSB:0] packet_length,
 
 	/* Number of packets and flits currently in the buffer. */
-	output [$clog2(BUFFER_DEPTH)-1:0] n_packets,
-	output [$clog2(BUFFER_DEPTH)-1:0] n_flits,
+	output logic [$clog2(BUFFER_DEPTH)-1:0] n_packets,
+	output logic [$clog2(BUFFER_DEPTH)-1:0] n_flits,
 
 	/* Output used for streaming flits back out of the router. */
-	output [FLIT_SIZE-1:0] out_flit,
-	output out_flit_valid
+	output logic [FLIT_SIZE-1:0] out_flit,
+	output logic out_flit_valid
 
 );
 
-packet_buffer_state state;
+
+`ifdef COCOTB_SIM
+initial begin
+	$dumpfile("packet_buffer.vcd");
+	$dumpvars(2, packet_buffer);
+	#1;
+end
+`endif
+
+/* To simply implementing the state machine, we take advantage of the fact
+ * that the (Idle, Reading Header, Reading Body) portion of the SM is
+ * independant from the (Dumping, Control Ready, Streaming) portion of the SM.
+ */
+
+packet_buffer_state state_control;
+packet_buffer_state state_buffer;
 
 logic [FLIT_SIZE-1:0] ringbuffer [BUFFER_DEPTH-1:0];
 logic [0:0] ringbuffer_valid [BUFFER_DEPTH-1:0];
@@ -162,15 +173,24 @@ assign from_addr     = header[FROM_ADDRESS_MSB :FROM_ADDRESS_LSB ];
 assign packet_length = header[PACKET_LENGTH_MSB:PACKET_LENGTH_LSB];
 
 initial begin
-	state = STATE_IDLE;
+	state_buffer = STATE_IDLE;
+	state_control = STATE_IDLE;
+	ringbuffer_rxaddr = 0;
+	ringbuffer_headaddr = 0;
+	ringbuffer_valid[0] = 0;
+	n_packets = 0;
+	n_flits = 0;
+	packet_ready = 0;
+	flits_received = 0;
 end
 
 always @(posedge clk) begin
-	if !rst begin
-		state <= STATE_IDLE;
+	if (!rst) begin
+		state_control <= STATE_IDLE;
+		state_buffer <= STATE_IDLE;
 		ringbuffer_rxaddr <= 0;
 		ringbuffer_headaddr <= 0;
-		rinbfuffer_valid[0] <= 0;
+		ringbuffer_valid[0] <= 0;
 		n_packets <= 0;
 		n_flits <= 0;
 		packet_ready <= 0;
@@ -178,76 +198,42 @@ always @(posedge clk) begin
 	end else begin
 
 		/* We are always able to accept an incoming flit */
-		if in_flit_valid begin
+		if (in_flit_valid) begin
 			ringbuffer[ringbuffer_rxaddr] <= in_flit;
 			ringbuffer_valid[ringbuffer_rxaddr] <= 1'b1;
-			rinbuffer_rxaddr <= ringbuffer_rxaddr + 1;
+			ringbuffer_rxaddr <= ringbuffer_rxaddr + 1;
 			n_flits <= n_flits + 1;
 			packet_ready <= 1;
 			flits_received <= flits_received + 1;
 		end
 
-
-		case (state)
+		case (state_buffer)
 			STATE_IDLE: begin
-				if in_flit_valid begin
-					state <= STATE_READING_HEADER;
+				if (in_flit_valid) begin
+					state_buffer <= STATE_READING_HEADER;
 					header <= in_flit;
 					n_packets <= n_packets + 1;
-					flits_received <= 0;
-				end else begin
-					state <= STATE_IDLE;
+					flits_received <= 1;
 				end
 			end
 
-			STATE_READING_HEADER_AND_CONTROL_READY: begin
-				if in_flit_valid && (control_valid) && (stream) && (!drop) begin
-					state <= STATE_READING_BODY_AND_STREAMING;
-
-				end else if in_flit_valid && (control_valid) && (!stream) && (drop) begin
-					state <= STATE_READING_BODY_AND_DUMPING;
-
-				end else if in_flit_valid && (!control_valid) begin
-					state <= STATE_READING_BODY_AND_CONTROL_READY;
-
-				end else begin
-					state <= CONTROL_READY;
-
-				end
-
+			STATE_READING_HEADER: begin
+				state_buffer <= STATE_READING_BODY;
 			end
 
-			STATE_READING_BODY_AND_CONTROL_READY begin
-				if in_flit_valid && (control_valid) && (stream) && (!drop) && (flits_received <= packet_length) begin
-					state <= STATE_READING_BODY_AND_STREAMING;
+			STATE_READING_BODY: begin
 
-				end else if in_flit_valid && (control_valid) && (stream) && (!drop) && (flits_received > packet_length) begin
-					state <= STATE_READING_HEADER_AND_STREAMING;
-					flits_received <= 0;
-
-				end else if in_flit_valid && (control_valid) && (!stream) && (drop) && (flits_received <= packet_length) begin
-					state <= STATE_READING_BODY_AND_DUMPING;
-
-				end else if in_flit_valid && (control_valid) && (!stream) && (drop) && (flits_received > packet_length) begin
-					state <= STATE_READING_HEADER_AND_DUMPING;
-					flits_received <= 0;
-
-				end else if in_flit_valid && (!control_valid) && (flits_received <= packet_length) begin
-					state <= STATE_READING_BODY_AND_CONTROL_READY;
-
-				end else if in_flit_valid && (!control_valid) && (flits_received > packet_length) begin
-					state <= STATE_READING_HEADER_AND_CONTROL_READY;
-					flits_received <= 0;
-
+				// NOTE: this assumes the packet_length
+				// includes the header flit.
+				if (flits_received >= packet_length) begin
+					state_buffer <= STATE_IDLE;
 				end else begin
-					state <= CONTROL_READY;
-
+					state_buffer <= STATE_READING_BODY;
 				end
 			end
+
 		endcase
 	end
-
-
 
 end
 

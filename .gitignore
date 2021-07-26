@@ -1,3 +1,6 @@
 *.vcd
 build/*
 .*.done
+tb/*/__pycache__
+tb/*/*.xml
+tb/*/sim_build
