@@ -12,6 +12,10 @@ def pack_header(to_addr, from_addr, length):
 
 @cocotb.test()
 async def test_packet_buffer_1(dut):
+    # This simple test ensures that the packet buffer can receive a single
+    # packet with multiple flits, and that the header remains exposed correctly
+    # as the flits are clocked in.
+
     clock = Clock(dut.clk, 10, units="us")
     cocotb.fork(clock.start())
 

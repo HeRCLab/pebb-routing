@@ -112,6 +112,10 @@ module packet_buffer #
 
 	input control_valid,
 
+	/* When this signal is asserted, the packet buffer is able to accept
+	 * commands. Commands sent when this signal is low will be ignored. */
+	output logic control_ready,
+
 	/* When asserted, the packet header outputs are valid and a packet
 	 * is in the buffer and ready to be routed. */
 	output logic packet_ready,
@@ -157,6 +161,9 @@ logic [$clog2(BUFFER_DEPTH)-1:0] ringbuffer_rxaddr;
 /* The address which is currently being processed by stream/dump. */
 logic [$clog2(BUFFER_DEPTH)-1:0] ringbuffer_headaddr;
 
+/* The address containing the header of the current packet. */
+logic [$clog2(BUFFER_DEPTH)-1:0] ringbuffer_packet_head_addr;
+
 /* Used as an internal counter for dump/stream to track how many flits
  * have so far been considered. */
 logic [$clog2(BUFFER_DEPTH)-1:0] flits_processed;
@@ -172,6 +179,8 @@ assign to_addr       = header[TO_ADDRESS_MSB   :TO_ADDRESS_LSB   ];
 assign from_addr     = header[FROM_ADDRESS_MSB :FROM_ADDRESS_LSB ];
 assign packet_length = header[PACKET_LENGTH_MSB:PACKET_LENGTH_LSB];
 
+assign control_ready = (state_control == STATE_CONTROL_READY) && (!rst);
+
 initial begin
 	state_buffer = STATE_IDLE;
 	state_control = STATE_IDLE;
@@ -182,6 +191,7 @@ initial begin
 	n_flits = 0;
 	packet_ready = 0;
 	flits_received = 0;
+	ringbuffer_packet_head_addr = 0;
 end
 
 always @(posedge clk) begin
@@ -195,8 +205,8 @@ always @(posedge clk) begin
 		n_flits <= 0;
 		packet_ready <= 0;
 		flits_received <= 0;
+		ringbuffer_packet_head_addr <= 0;
 	end else begin
-
 		/* We are always able to accept an incoming flit */
 		if (in_flit_valid) begin
 			ringbuffer[ringbuffer_rxaddr] <= in_flit;
@@ -211,6 +221,7 @@ always @(posedge clk) begin
 			STATE_IDLE: begin
 				if (in_flit_valid) begin
 					state_buffer <= STATE_READING_HEADER;
+					ringbuffer_packet_head_addr <= ringbuffer_rxaddr;
 					header <= in_flit;
 					n_packets <= n_packets + 1;
 					flits_received <= 1;
@@ -232,6 +243,83 @@ always @(posedge clk) begin
 				end
 			end
 
+		endcase
+
+		case (state_control)
+			STATE_IDLE: begin
+				if (in_flit_valid) begin
+					state_control <= STATE_CONTROL_READY;
+				end
+			end
+
+			STATE_CONTROL_READY: begin
+				/* Notice that if we receive a stream or dump
+				 * command, we begin processing it
+				 * immediately */
+
+				if ((control_valid) && (drop) && (!stream)) begin
+					state_control <= STATE_DUMPING;
+					out_flit_valid <= 0;
+					ringbuffer_valid[ringbuffer_headaddr] = 0;
+					ringbuffer_headaddr <= ringbuffer_headaddr + 1;
+
+				end else if ((control_valid) && (!drop) && (stream)) begin
+					state_control <= STATE_STREAMING;
+					out_flit <= ringbuffer[ringbuffer_headaddr];
+					ringbuffer_valid[ringbuffer_headaddr] = 0;
+					out_flit_valid <= 1;
+					ringbuffer_headaddr <= ringbuffer_headaddr + 1;
+
+				end else begin
+
+					state_control <= STATE_CONTROL_READY;
+				end
+			end
+
+			STATE_STREAMING: begin
+				/* Check if we have finished streaming the
+				 * whole packet */
+				if ((ringbuffer_headaddr+1) > (ringbuffer_packet_head_addr + packet_length)) begin
+					if (n_packets > 1) begin
+						state_control <= STATE_CONTROL_READY;
+					end else begin
+						state_control <= STATE_IDLE;
+					end
+
+					out_flit_valid <= 0;
+					n_packets <= n_packets - 1;
+				end else begin
+					state_control <= STATE_STREAMING;
+				end
+
+				ringbuffer_valid[ringbuffer_headaddr] = 0;
+				out_flit <= ringbuffer[ringbuffer_headaddr];
+				out_flit_valid <= 1;
+				ringbuffer_headaddr <= ringbuffer_headaddr + 1;
+
+			end
+
+			STATE_DUMPING: begin
+				/* Check if we have finished dropping the
+				 * whole packet */
+				if ((ringbuffer_headaddr+1) > (ringbuffer_packet_head_addr + packet_length)) begin
+					if (n_packets > 1) begin
+						state_control <= STATE_CONTROL_READY;
+					end else begin
+						state_control <= STATE_IDLE;
+					end
+
+					out_flit_valid <= 0;
+					n_packets <= n_packets - 1;
+				end else begin
+					state_control <= STATE_DUMPING;
+				end
+
+				ringbuffer_valid[ringbuffer_headaddr] = 0;
+				out_flit_valid <= 0;
+				ringbuffer_headaddr <= ringbuffer_headaddr + 1;
+
+			end
 		endcase
 	end
 
