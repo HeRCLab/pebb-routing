@@ -18,6 +18,7 @@ TB_DONEFILES=$(shell find $(TB_DIR) -type f -name "Makefile" -exec dirname {} \;
 SV_FILES=$(shell find $(RTL_DIR) -type f -iname "*.sv")
 H_FILES=$(shell find $(SIM_DIR) -type f -iname "*.h")
 GO_FILES=$(shell find $(SIM_DIR) -type f -iname "*.go")
+PY_TB_FILES=$(shell find $(TB_DIR) -type f -iname "*.py")
 
 
 BUILD_DIR=$(PROJECT_DIR)/build
@@ -48,10 +49,10 @@ C_INCLUDES=-I$(GENERATED_DIR) -I$(VERILATOR_INC) -I$(VERILATOR_OBJ_DIR) -I$(SIM_
 CFLAGS=-Wall -Wextra $(C_INCLUDES)
 CXXFLAGS=--std=c++17 $(CFLAGS)
 
-test: $(TB_DONEFILES)
+test: $(TB_DONEFILES) $(PY_TB_FILES)
 .PHONY: test
 
-$(TB_DIR)/%.done: $(TB_DIR)/%/Makefile $(SV_FILES)
+$(TB_DIR)/%.done: $(TB_DIR)/%/Makefile $(SV_FILES) $(PY_TB_FILES)
 > sh -c 'cd "'"$$(echo "$@" | sed s/.done//g)"'/"; make SIM='"$(TEST_SIMULATOR)"';'
 > touch $@
 
