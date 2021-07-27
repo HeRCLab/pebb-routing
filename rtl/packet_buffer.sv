@@ -179,7 +179,7 @@ assign to_addr       = header[TO_ADDRESS_MSB   :TO_ADDRESS_LSB   ];
 assign from_addr     = header[FROM_ADDRESS_MSB :FROM_ADDRESS_LSB ];
 assign packet_length = header[PACKET_LENGTH_MSB:PACKET_LENGTH_LSB];
 
-assign control_ready = (state_control == STATE_CONTROL_READY) && (!rst);
+assign control_ready = (state_control == STATE_CONTROL_READY) && (rst);
 
 initial begin
 	state_buffer = STATE_IDLE;
@@ -221,8 +221,16 @@ always @(posedge clk) begin
 			STATE_IDLE: begin
 				if (in_flit_valid) begin
 					state_buffer <= STATE_READING_HEADER;
-					ringbuffer_packet_head_addr <= ringbuffer_rxaddr;
-					header <= in_flit;
+
+					/* If the previous packet hasn't been
+					 * processed yet, we want to stick
+					 * with the same header, otherwise
+					 * we'll update the header-related
+					 * stuff. */
+					if ((ringbuffer_headaddr == ringbuffer_rxaddr) || n_packets == 0) begin
+						ringbuffer_packet_head_addr <= ringbuffer_rxaddr;
+						header <= in_flit;
+					end
 					n_packets <= n_packets + 1;
 					flits_received <= 1;
 				end
@@ -262,6 +270,7 @@ always @(posedge clk) begin
 					out_flit_valid <= 0;
 					ringbuffer_valid[ringbuffer_headaddr] = 0;
 					ringbuffer_headaddr <= ringbuffer_headaddr + 1;
+					n_flits <= n_flits - 1;
 
 				end else if ((control_valid) && (!drop) && (stream)) begin
 					state_control <= STATE_STREAMING;
@@ -269,6 +278,7 @@ always @(posedge clk) begin
 					ringbuffer_valid[ringbuffer_headaddr] = 0;
 					out_flit_valid <= 1;
 					ringbuffer_headaddr <= ringbuffer_headaddr + 1;
+					n_flits <= n_flits - 1;
 
 				end else begin
 
@@ -279,11 +289,14 @@ always @(posedge clk) begin
 			STATE_STREAMING: begin
 				/* Check if we have finished streaming the
 				 * whole packet */
-				if ((ringbuffer_headaddr+1) > (ringbuffer_packet_head_addr + packet_length)) begin
+				if ((ringbuffer_headaddr+1) >= (ringbuffer_packet_head_addr + packet_length)) begin
 					if (n_packets > 1) begin
 						state_control <= STATE_CONTROL_READY;
+						ringbuffer_packet_head_addr <= ringbuffer_headaddr + 1;
+						header <= ringbuffer[ringbuffer_headaddr+1];
 					end else begin
 						state_control <= STATE_IDLE;
+						packet_ready <= 0;
 					end
 
 					out_flit_valid <= 0;
@@ -296,17 +309,19 @@ always @(posedge clk) begin
 				out_flit <= ringbuffer[ringbuffer_headaddr];
 				out_flit_valid <= 1;
 				ringbuffer_headaddr <= ringbuffer_headaddr + 1;
+				n_flits <= n_flits - 1;
 
 			end
 
 			STATE_DUMPING: begin
 				/* Check if we have finished dropping the
 				 * whole packet */
-				if ((ringbuffer_headaddr+1) > (ringbuffer_packet_head_addr + packet_length)) begin
+				if ((ringbuffer_headaddr+1) >= (ringbuffer_packet_head_addr + packet_length)) begin
 					if (n_packets > 1) begin
 						state_control <= STATE_CONTROL_READY;
 					end else begin
 						state_control <= STATE_IDLE;
+						packet_ready <= 0;
 					end
 
 					out_flit_valid <= 0;
@@ -318,6 +333,7 @@ always @(posedge clk) begin
 				ringbuffer_valid[ringbuffer_headaddr] = 0;
 				out_flit_valid <= 0;
 				ringbuffer_headaddr <= ringbuffer_headaddr + 1;
+				n_flits <= n_flits - 1;
 
 			end
 		endcase
