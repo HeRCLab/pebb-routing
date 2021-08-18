@@ -175,6 +175,12 @@ logic [$clog2(BUFFER_DEPTH)-1:0] flits_received;
 /* The header flit of the current packet. */
 logic [FLIT_SIZE-1:0] header;
 
+/* Number of flits which been added or removed to the buffer, twos comp,
+ * either -1, 1, or 0. */
+logic [$clog2(BUFFER_DEPTH)-1:0] flit_delta;
+
+logic [$clog2(BUFFER_DEPTH)-1:0] packet_delta;
+
 assign to_addr       = header[TO_ADDRESS_MSB   :TO_ADDRESS_LSB   ];
 assign from_addr     = header[FROM_ADDRESS_MSB :FROM_ADDRESS_LSB ];
 assign packet_length = header[PACKET_LENGTH_MSB:PACKET_LENGTH_LSB];
@@ -194,6 +200,41 @@ initial begin
 	ringbuffer_packet_head_addr = 0;
 end
 
+always_comb begin
+	/* Because we cannot write to the n_flits or n_packets registers twice
+	 * in the same iteration, we calculate their deltas and use that to
+	 * modify the pertinent register only once per cycle. */
+	
+	if (!rst) begin
+		flit_delta = 0;
+	end else if (in_flit_valid && ((state_control == STATE_STREAMING) || (state_control == STATE_DUMPING) || (state_control == STATE_CONTROL_READY && (control_valid && (drop || stream))))) begin
+		flit_delta = 0;
+	end else if (in_flit_valid) begin
+		flit_delta = 1;
+	end else if ((state_control == STATE_STREAMING) || (state_control == STATE_DUMPING) || (state_control == STATE_CONTROL_READY && (control_valid && (drop || stream)))) begin
+		flit_delta = -1;
+	end else begin
+		flit_delta = 0;
+	end
+
+	if (!rst) begin
+		packet_delta = 0;
+
+	end else if (((state_buffer == STATE_IDLE) && in_flit_valid) && (((ringbuffer_headaddr+1) >= (ringbuffer_packet_head_addr + packet_length)) && ((state_control == STATE_STREAMING) || (state_control == STATE_DUMPING)))) begin
+		packet_delta = 0;
+
+	end else if (((ringbuffer_headaddr+1) >= (ringbuffer_packet_head_addr + packet_length)) && ((state_control == STATE_STREAMING) || (state_control == STATE_DUMPING))) begin
+		packet_delta = -1;
+
+	end else if ((state_buffer == STATE_IDLE) && in_flit_valid) begin
+		packet_delta = 1;
+
+	end else begin
+
+		packet_delta = 0;
+	end
+end
+
 always @(posedge clk) begin
 	if (!rst) begin
 		state_control <= STATE_IDLE;
@@ -207,12 +248,15 @@ always @(posedge clk) begin
 		flits_received <= 0;
 		ringbuffer_packet_head_addr <= 0;
 	end else begin
+		n_flits <= n_flits + flit_delta;
+		n_packets <= n_packets + packet_delta;
+
 		/* We are always able to accept an incoming flit */
 		if (in_flit_valid) begin
 			ringbuffer[ringbuffer_rxaddr] <= in_flit;
 			ringbuffer_valid[ringbuffer_rxaddr] <= 1'b1;
 			ringbuffer_rxaddr <= ringbuffer_rxaddr + 1;
-			n_flits <= n_flits + 1;
+			//n_flits <= n_flits + 1;
 			packet_ready <= 1;
 			flits_received <= flits_received + 1;
 		end
@@ -231,7 +275,7 @@ always @(posedge clk) begin
 						ringbuffer_packet_head_addr <= ringbuffer_rxaddr;
 						header <= in_flit;
 					end
-					n_packets <= n_packets + 1;
+					//n_packets <= n_packets + 1;
 					flits_received <= 1;
 				end
 			end
@@ -270,7 +314,7 @@ always @(posedge clk) begin
 					out_flit_valid <= 0;
 					ringbuffer_valid[ringbuffer_headaddr] = 0;
 					ringbuffer_headaddr <= ringbuffer_headaddr + 1;
-					n_flits <= n_flits - 1;
+					//n_flits <= n_flits - 1;
 
 				end else if ((control_valid) && (!drop) && (stream)) begin
 					state_control <= STATE_STREAMING;
@@ -278,7 +322,7 @@ always @(posedge clk) begin
 					ringbuffer_valid[ringbuffer_headaddr] = 0;
 					out_flit_valid <= 1;
 					ringbuffer_headaddr <= ringbuffer_headaddr + 1;
-					n_flits <= n_flits - 1;
+					//n_flits <= n_flits - 1;
 
 				end else begin
 
@@ -300,16 +344,16 @@ always @(posedge clk) begin
 					end
 
 					out_flit_valid <= 0;
-					n_packets <= n_packets - 1;
+					//n_packets <= n_packets - 1;
 				end else begin
 					state_control <= STATE_STREAMING;
+					//n_flits <= n_flits - 1;
 				end
 
 				ringbuffer_valid[ringbuffer_headaddr] = 0;
 				out_flit <= ringbuffer[ringbuffer_headaddr];
 				out_flit_valid <= 1;
 				ringbuffer_headaddr <= ringbuffer_headaddr + 1;
-				n_flits <= n_flits - 1;
 
 			end
 
@@ -325,15 +369,15 @@ always @(posedge clk) begin
 					end
 
 					out_flit_valid <= 0;
-					n_packets <= n_packets - 1;
+					//n_packets <= n_packets - 1;
 				end else begin
 					state_control <= STATE_DUMPING;
+					//n_flits <= n_flits - 1;
 				end
 
 				ringbuffer_valid[ringbuffer_headaddr] = 0;
 				out_flit_valid <= 0;
 				ringbuffer_headaddr <= ringbuffer_headaddr + 1;
-				n_flits <= n_flits - 1;
 
 			end
 		endcase

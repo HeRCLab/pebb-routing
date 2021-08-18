@@ -4,8 +4,8 @@ from cocotb.triggers import FallingEdge, RisingEdge
 from cocotb.binary import BinaryValue
 
 import random
-
 import struct
+import logging
 
 def pack_header(to_addr, from_addr, length):
         return BinaryValue(struct.pack("BBBxxxxx", to_addr, from_addr, length))
@@ -57,7 +57,7 @@ async def simulate_packetbuffer(dut, packets, actions, do_assert=True, max_iter 
 
         await(FallingEdge(dut.clk))
         if dut.out_flit_valid == 1:
-            outputs.append(dut.out_flit)
+            outputs.append(dut.out_flit.value)
 
         await(RisingEdge(dut.clk))
         if (packetNo < len(packets)) and (flitNo < len(packets[packetNo])):
@@ -68,7 +68,7 @@ async def simulate_packetbuffer(dut, packets, actions, do_assert=True, max_iter 
             dut.in_flit <= packets[packetNo][flitNo]
             dut.in_flit_valid <= 1
 
-            if flitNo >= len(packets[packetNo]):
+            if flitNo >= len(packets[packetNo])-1:
                 flitNo = 0
                 packetNo += 1
             else:
@@ -91,10 +91,13 @@ async def simulate_packetbuffer(dut, packets, actions, do_assert=True, max_iter 
             dut.stream <= 0
             dut.drop <= 0
 
-        if (processed >= len(packets)) and (packetNo >= len(packets)) and (flitNo >= len(packets[-1])) and (dut.n_flits == 0) and (dut.n_packets == 0):
+        print(processed, len(packets), packetNo, flitNo, len(packets[-1]), dut.n_flits, dut.n_packets)
+        print(processed >= len(packets), packetNo >= (len(packets)-1), dut.n_flits == 0, dut.n_packets == 0)
+
+        if (processed >= len(packets)) and (packetNo >= (len(packets)-1)) and (dut.n_flits == 0) and (dut.n_packets == 0):
             break
 
-        assert iterations < (2 * input_flits)
+        assert iterations <= (2 * input_flits)
 
     if max_iter is not None:
         assert iterations <= max_iter
